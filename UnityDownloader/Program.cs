@@ -2,10 +2,41 @@
 
 internal static class Program
 {
+	private static readonly HashSet<string> versionsToSkip = ["5.1.0f2"];
 	static void Main(string[] args)
 	{
+		if (args.Length != 1)
+		{
+			Console.WriteLine("Usage: UnityDownloader <destinationDirectory>");
+			return;
+		}
+
+		string destinationDirectory = args[0];
+		if (!Directory.Exists(destinationDirectory))
+		{
+			Console.WriteLine("Destination directory does not exist!");
+			return;
+		}
+
+		string[] files = Directory.GetFiles(destinationDirectory, "*.exe").Select(f => Path.GetFileName(f)).ToArray();
+
 		string pageData = FetchPageData().WaitForResult();
-		List<UnityVersionData> unityVersions = GetDownloadUrls(pageData).ToList();
+		foreach (UnityVersionData unityVersion in GetDownloadUrls(pageData))
+		{
+			if (versionsToSkip.Contains(unityVersion.Version))
+				continue;
+
+			string fileName = unityVersion.GetWindowsExeName();
+			if (files.Contains(fileName))
+				continue;
+
+			Console.WriteLine(unityVersion.Version);
+			Thread.Sleep(10000);
+			HttpClient client = CreateHttpClient();
+			Stream source = client.GetStreamAsync(unityVersion.GetWindowsUrl()).WaitForResult();
+			using FileStream destination = File.Create(Path.Combine(destinationDirectory, fileName));
+			source.CopyTo(destination);
+		}
 		Console.WriteLine("Done!");
 	}
 

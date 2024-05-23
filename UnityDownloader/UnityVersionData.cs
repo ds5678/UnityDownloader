@@ -13,4 +13,9 @@ public readonly record struct UnityVersionData(string Version, bool Is64Bit, str
 
 		return $"https://download.unity3d.com/download_unity/{VersionId}/{middle}{Version}.exe";
 	}
+
+	public string GetWindowsExeName()
+	{
+		return Is64Bit ? $"{SetupIdentifier64Bit}{Version}.exe" : $"{SetupIdentifier32Bit}{Version}.exe";
+	}
 }
