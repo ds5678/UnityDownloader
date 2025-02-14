@@ -1,50 +1,77 @@
-﻿namespace UnityDownloader;
+﻿using System.Text.Json;
+
+namespace UnityDownloader;
 
 internal static class Program
 {
 	private static readonly HashSet<string> versionsToSkip = ["5.1.0f2"];
 	static void Main(string[] args)
 	{
-		if (args.Length != 1)
+		if (args.Length < 1)
 		{
-			Console.WriteLine("Usage: UnityDownloader <destinationDirectory>");
+			PrintUsage();
 			return;
 		}
 
-		string destinationDirectory = args[0];
-		if (!Directory.Exists(destinationDirectory))
+		switch (args[0])
 		{
-			Console.WriteLine("Destination directory does not exist!");
-			return;
+			case "identify":
+				{
+					string outputPath = args.Length > 1 ? args[1] : "versions.json";
+
+					List<UnityApiNode> nodes = GetAllVersions(CreateHttpClient()).WaitForResult();
+
+					string result = JsonSerializer.Serialize(nodes, UnityApiSerializerContext.Default.ListUnityApiNode);
+
+					File.WriteAllText(outputPath, result);
+				}
+				break;
+			case "download" when args.Length >= 2:
+				{
+					string destinationDirectory = args[1];
+					if (!Directory.Exists(destinationDirectory))
+					{
+						Console.WriteLine("Destination directory does not exist!");
+						return;
+					}
+
+					string inputPath = args.Length > 2 ? args[2] : "versions.json";
+					List<UnityApiNode>? nodes = JsonSerializer.Deserialize<List<UnityApiNode>>(File.ReadAllText(inputPath), UnityApiSerializerContext.Default.ListUnityApiNode);
+					if (nodes == null)
+					{
+						Console.WriteLine("Failed to deserialize versions!");
+						return;
+					}
+
+					string[] files = Directory.GetFiles(destinationDirectory, "*.exe").Select(f => Path.GetFileName(f)).ToArray();
+					foreach (UnityApiNode unityVersion in nodes)
+					{
+						if (versionsToSkip.Contains(unityVersion.Version.ToString()))
+							continue;
+						string fileName = $"UnitySetup64-{unityVersion.Version}.exe";
+						if (files.Contains(fileName))
+							continue;
+						Console.WriteLine(unityVersion.Version);
+						Thread.Sleep(10000);
+						HttpClient client = CreateHttpClient();
+						Stream source = client.GetStreamAsync(unityVersion.Win64DownloadUrl).WaitForResult();
+						using FileStream destination = File.Create(Path.Combine(destinationDirectory, fileName));
+						source.CopyTo(destination);
+					}
+					Console.WriteLine("Done!");
+				}
+				break;
+			default:
+				PrintUsage();
+				return;
 		}
-
-		string[] files = Directory.GetFiles(destinationDirectory, "*.exe").Select(f => Path.GetFileName(f)).ToArray();
-
-		string pageData = FetchPageData().WaitForResult();
-		foreach (UnityVersionData unityVersion in GetDownloadUrls(pageData))
-		{
-			if (versionsToSkip.Contains(unityVersion.Version))
-				continue;
-
-			string fileName = unityVersion.GetWindowsExeName();
-			if (files.Contains(fileName))
-				continue;
-
-			Console.WriteLine(unityVersion.Version);
-			Thread.Sleep(10000);
-			HttpClient client = CreateHttpClient();
-			Stream source = client.GetStreamAsync(unityVersion.GetWindowsUrl()).WaitForResult();
-			using FileStream destination = File.Create(Path.Combine(destinationDirectory, fileName));
-			source.CopyTo(destination);
-		}
-		Console.WriteLine("Done!");
 	}
 
-	private static Task<string> FetchPageData()
+	private static void PrintUsage()
 	{
-		HttpClient client = CreateHttpClient();
-		client.Timeout = TimeSpan.FromSeconds(30);
-		return client.GetStringAsync("https://unity.com/releases/editor/archive");
+		Console.WriteLine("Usage:");
+		Console.WriteLine("\tUnityDownloader identify <output json>?");
+		Console.WriteLine("\tUnityDownloader download <destinationDirectory> <input json>?");
 	}
 
 	private static HttpClient CreateHttpClient()
@@ -55,52 +82,52 @@ internal static class Program
 		return client;
 	}
 
-	private static IEnumerable<UnityVersionData> GetDownloadUrls(string pageContent)
+	private static async Task<string?> GetResponseAsync(HttpClient client, int maxVersions = 100, int skip = 0)
 	{
-		HashSet<string> unityVersions = [];
-		string[] pageLines = pageContent.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+		const string Url = @"https://services.unity.com/graphql";
 
-		foreach (string line in pageLines)
+		string content = $$"""
+			{
+				"query":"query GetVersions($limit:Int!,$skip:Int!){getUnityReleases(limit:$limit,skip:$skip,entitlements:[XLTS]){pageInfo{hasNextPage}edges{node{version,shortRevision,releaseDate,unityHubDeepLink,stream} } } }",
+				"operationName":"GetVersions",
+				"variables":{
+					"limit": {{maxVersions}},
+					"skip": {{skip}}
+				}
+			}
+			""";
+
+		var response = await client.PostAsync(Url, new StringContent(content, null, "application/json"));
+		if (!response.IsSuccessStatusCode)
 		{
-			if (string.IsNullOrWhiteSpace(line) || line.Contains("Samsung"))
-				continue;
-
-			const string hrefIdentifier = """<a href="https://download.unity3d.com/""";
-			int hrefIdentifierIndex = line.IndexOf(hrefIdentifier);
-			if (hrefIdentifierIndex < 0)
-				continue;
-
-			string setupIdentifier;
-			bool is64Bit;
-			if (line.Contains(UnityVersionData.SetupIdentifier64Bit))
-			{
-				setupIdentifier = UnityVersionData.SetupIdentifier64Bit;
-				is64Bit = true;
-			}
-			else if (line.Contains(UnityVersionData.SetupIdentifier32Bit))
-			{
-				setupIdentifier = UnityVersionData.SetupIdentifier32Bit;
-				is64Bit = false;
-			}
-			else
-			{
-				continue;
-			}
-
-			string subline = line.Substring(hrefIdentifierIndex + hrefIdentifier.Length);
-			int extensionIndex = subline.IndexOf(".exe");
-			if (extensionIndex < 0)
-				continue;
-
-			string foundVersion = subline.Substring(0, extensionIndex);
-			foundVersion = foundVersion.Substring(foundVersion.LastIndexOf(setupIdentifier) + setupIdentifier.Length);
-
-			string versionId = subline.Split('/')[1];
-
-			if (unityVersions.Add(foundVersion))
-			{
-				yield return new UnityVersionData(foundVersion, is64Bit, versionId);
-			}
+			Console.WriteLine($"Failed to get response: {response.StatusCode}");
+			return null;
 		}
+		return await response.Content.ReadAsStringAsync();
+	}
+
+	private static async Task<List<UnityApiNode>> GetAllVersions(HttpClient client)
+	{
+		List<UnityApiNode> nodes = new();
+		int skip = 0;
+		const int maxVersions = 100;
+		while (true)
+		{
+			string? response = await GetResponseAsync(client, maxVersions, skip);
+			if (response == null)
+				break;
+			UnityApiResponse? unityResponse = JsonSerializer.Deserialize(response, UnityApiSerializerContext.Default.UnityApiResponse);
+			if (unityResponse == null)
+				break;
+			nodes.AddRange(unityResponse.Nodes);
+			if (!unityResponse.HasNextPage)
+				break;
+			skip += maxVersions;
+
+			await Task.Delay(5000);
+		}
+
+		nodes.Sort((x, y) => x.Version.CompareTo(y.Version));
+		return nodes;
 	}
 }
