@@ -4,7 +4,14 @@ namespace UnityDownloader;
 
 internal static class Program
 {
-	private static readonly HashSet<string> versionsToSkip = ["5.1.0f2"];
+	private static readonly HashSet<string> versionsToSkip =
+	[
+		"5.1.0b3",
+		"5.1.0b4",
+		"5.1.0b5",
+		"5.1.0b6",
+		"5.1.0f2",
+	];
 	static void Main(string[] args)
 	{
 		if (args.Length < 1)
@@ -54,7 +61,16 @@ internal static class Program
 						Console.WriteLine(unityVersion.Version);
 						Thread.Sleep(10000);
 						HttpClient client = CreateHttpClient();
-						Stream source = client.GetStreamAsync(unityVersion.Win64DownloadUrl).WaitForResult();
+						Stream source;
+						try
+						{
+							source = client.GetStreamAsync(unityVersion.Win64DownloadUrl).WaitForResult();
+						}
+						catch
+						{
+							Console.WriteLine($"Failed to download {unityVersion.Version}");
+							continue;
+						}
 						using FileStream destination = File.Create(Path.Combine(destinationDirectory, fileName));
 						source.CopyTo(destination);
 					}
