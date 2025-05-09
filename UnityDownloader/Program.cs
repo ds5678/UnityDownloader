@@ -26,7 +26,7 @@ internal static class Program
 				{
 					string outputPath = args.Length > 1 ? args[1] : "versions.json";
 
-					List<UnityApiNode> nodes = GetAllVersions(CreateHttpClient()).WaitForResult();
+					List<UnityApiNode> nodes = GetAllVersions();
 
 					string result = JsonSerializer.Serialize(nodes, UnityApiSerializerContext.Default.ListUnityApiNode);
 
@@ -43,37 +43,36 @@ internal static class Program
 					}
 
 					string inputPath = args.Length > 2 ? args[2] : "versions.json";
-					List<UnityApiNode>? nodes = JsonSerializer.Deserialize<List<UnityApiNode>>(File.ReadAllText(inputPath), UnityApiSerializerContext.Default.ListUnityApiNode);
+					List<UnityApiNode>? nodes = JsonSerializer.Deserialize(File.ReadAllText(inputPath), UnityApiSerializerContext.Default.ListUnityApiNode);
 					if (nodes == null)
 					{
 						Console.WriteLine("Failed to deserialize versions!");
 						return;
 					}
 
-					string[] files = Directory.GetFiles(destinationDirectory, "*.exe").Select(f => Path.GetFileName(f)).ToArray();
-					foreach (UnityApiNode unityVersion in nodes)
+					Download(destinationDirectory, nodes);
+					Console.WriteLine("Done!");
+				}
+				break;
+			case "both" when args.Length >= 2:
+				{
+					string destinationDirectory = args[1];
+					if (!Directory.Exists(destinationDirectory))
 					{
-						if (versionsToSkip.Contains(unityVersion.Version.ToString()))
-							continue;
-						string fileName = $"UnitySetup64-{unityVersion.Version}.exe";
-						if (files.Contains(fileName))
-							continue;
-						Console.WriteLine(unityVersion.Version);
-						Thread.Sleep(10000);
-						HttpClient client = CreateHttpClient();
-						Stream source;
-						try
-						{
-							source = client.GetStreamAsync(unityVersion.Win64DownloadUrl).WaitForResult();
-						}
-						catch
-						{
-							Console.WriteLine($"Failed to download {unityVersion.Version}");
-							continue;
-						}
-						using FileStream destination = File.Create(Path.Combine(destinationDirectory, fileName));
-						source.CopyTo(destination);
+						Console.WriteLine("Destination directory does not exist!");
+						return;
 					}
+
+					Console.WriteLine("Getting the list of versions...");
+					List<UnityApiNode> nodes = GetAllVersions();
+
+					Console.WriteLine("Downloading each missing version...");
+					Download(destinationDirectory, nodes);
+
+					string outputPath = args.Length > 2 ? args[2] : "versions.json";
+					string result = JsonSerializer.Serialize(nodes, UnityApiSerializerContext.Default.ListUnityApiNode);
+					File.WriteAllText(outputPath, result);
+
 					Console.WriteLine("Done!");
 				}
 				break;
@@ -83,11 +82,40 @@ internal static class Program
 		}
 	}
 
+	private static void Download(string destinationDirectory, List<UnityApiNode> nodes)
+	{
+		string[] files = Directory.GetFiles(destinationDirectory, "*.exe").Select(f => Path.GetFileName(f)).ToArray();
+		foreach (UnityApiNode unityVersion in nodes)
+		{
+			if (versionsToSkip.Contains(unityVersion.Version.ToString()))
+				continue;
+			string fileName = $"UnitySetup64-{unityVersion.Version}.exe";
+			if (files.Contains(fileName))
+				continue;
+			Console.WriteLine(unityVersion.Version);
+			Thread.Sleep(10000);
+			HttpClient client = CreateHttpClient();
+			Stream source;
+			try
+			{
+				source = client.GetStreamAsync(unityVersion.Win64DownloadUrl).WaitForResult();
+			}
+			catch
+			{
+				Console.WriteLine($"Failed to download {unityVersion.Version}");
+				continue;
+			}
+			using FileStream destination = File.Create(Path.Combine(destinationDirectory, fileName));
+			source.CopyTo(destination);
+		}
+	}
+
 	private static void PrintUsage()
 	{
 		Console.WriteLine("Usage:");
 		Console.WriteLine("\tUnityDownloader identify <output json>?");
 		Console.WriteLine("\tUnityDownloader download <destinationDirectory> <input json>?");
+		Console.WriteLine("\tUnityDownloader both <destinationDirectory> <output json>?");
 	}
 
 	private static HttpClient CreateHttpClient()
@@ -120,6 +148,11 @@ internal static class Program
 			return null;
 		}
 		return await response.Content.ReadAsStringAsync();
+	}
+
+	private static List<UnityApiNode> GetAllVersions()
+	{
+		return GetAllVersions(CreateHttpClient()).WaitForResult();
 	}
 
 	private static async Task<List<UnityApiNode>> GetAllVersions(HttpClient client)
