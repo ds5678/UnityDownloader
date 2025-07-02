@@ -132,8 +132,8 @@ internal static class Program
 
 		string content = $$"""
 			{
-				"query":"query GetVersions($limit:Int!,$skip:Int!){getUnityReleases(limit:$limit,skip:$skip,entitlements:[XLTS]){pageInfo{hasNextPage}edges{node{version,shortRevision,releaseDate,unityHubDeepLink,stream} } } }",
-				"operationName":"GetVersions",
+				"query":"query GetRelease($limit:Int!,$skip:Int!){getUnityReleases(limit:$limit,skip:$skip,entitlements:[XLTS]){pageInfo{hasNextPage}edges{node{version,shortRevision,releaseDate,unityHubDeepLink,stream} } } }",
+				"operationName":"GetRelease",
 				"variables":{
 					"limit": {{maxVersions}},
 					"skip": {{skip}}
