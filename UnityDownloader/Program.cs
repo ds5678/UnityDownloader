@@ -28,6 +28,12 @@ internal static class Program
 
 					List<UnityApiNode> nodes = GetAllVersions();
 
+					if (nodes.Count == 0)
+					{
+						Console.WriteLine("No versions found!");
+						return;
+					}
+
 					string result = JsonSerializer.Serialize(nodes, UnityApiSerializerContext.Default.ListUnityApiNode);
 
 					File.WriteAllText(outputPath, result);
@@ -65,6 +71,12 @@ internal static class Program
 
 					Console.WriteLine("Getting the list of versions...");
 					List<UnityApiNode> nodes = GetAllVersions();
+
+					if (nodes.Count == 0)
+					{
+						Console.WriteLine("No versions found!");
+						return;
+					}
 
 					Console.WriteLine("Downloading each missing version...");
 					Download(destinationDirectory, nodes);
